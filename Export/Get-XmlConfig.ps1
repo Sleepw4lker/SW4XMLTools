@@ -1,3 +1,5 @@
+# Should be renamed to a more general File Name - like Get-XmlVerifiedData
+# Implement a Switch to ignore Schema Errors?
 Function Get-XmlConfig {
 
     param (
@@ -9,35 +11,65 @@ Function Get-XmlConfig {
         [Parameter(Mandatory=$False)]
         [ValidateScript({Test-Path $_})]
         [String]
-        $SchemaPath
+        $SchemaPath,
+
+        [Parameter(Mandatory=$False)]
+        [ValidateScript({Test-Path $_})]
+        [String]
+        $SchemaDirectory
     )
 
     process {
 
         Write-Verbose "Loading Configuration File $Path"
 
-        If (-not ($SchemaPath)) {
+        # If no Schema Path was given, we try to find a Schema File within the XML File
+        If (-not $SchemaPath) {
 
             Try {
+
                 # Trying to extract the Schema Path from the XML File
                 $Namespace = @{xsi='http://www.w3.org/2001/XMLSchema-instance'}
-                $locationAttr = Select-Xml -Path $Path -Namespace $Namespace -XPath */@xsi:noNamespaceSchemaLocation
-                $a = $($locationAttr.Node."#text")
-                If ($a) {
+
+                # Clarify what this exactly does
+                $locationAttr = Select-Xml `
+                    -Path $Path `
+                    -Namespace $Namespace `
+                    -XPath */@xsi:noNamespaceSchemaLocation
+                $SchemaFileBaseName = $($locationAttr.Node."#text")
+
+                If ($SchemaFileBaseName) {
+
+                    # Try to find a Schema File with the given Name in the same Directory as the XML File
                     
-                    $b = "$((Get-Item $Path).Directory.FullName)\$a"
-                    $c = "$($Script:BaseDirectory)\conf\$a"
-                    If (Test-Path $b) {
-                        $SchemaPath = $b
+                    $SchemaFileNameInXmlDirectory = "$((Get-Item $Path).Directory.FullName)\$SchemaFileBaseName"
+                    
+                    If (Test-Path $SchemaFileNameInXmlDirectory) {
+
+                        $SchemaPath = $SchemaFileNameInXmlDirectory
                         Write-Verbose "Found inline Schema File $SchemaPath"
+
                     }
-                    ElseIf (Test-Path $c) {
-                        # Fallback to conf Directory
-                        $SchemaPath = $c
-                        Write-Verbose "Found inline Schema File $SchemaPath"
+                    Else {
+
+                        # Try to find a Schema File with the given Name in the specified Directory
+                    
+                        If ($SchemaDirectory) {
+
+                            $SchemaFileNameInGivenDirectory = "$SchemaDirectory\$SchemaFileBaseName"
+
+                            If (Test-Path $SchemaFileNameInGivenDirectory) {
+                                # Fallback to conf Directory
+                                $SchemaPath = $SchemaFileNameInGivenDirectory
+                                Write-Verbose "Found inline Schema File $SchemaPath"
+                            }
+
+                        }
+
                     }
                     
                 }
+
             }
             Catch {
                 # Nothing
@@ -51,7 +83,9 @@ Function Get-XmlConfig {
         # Use a Schema if explicitly given or found inline
         If ($SchemaPath) {
 
-            If (Test-XmlSchema2 -Path $Path -SchemaPath $SchemaPath) {
+            # Validating the XML File against the Schema File
+            If (Test-XmlSchema -Path $Path -SchemaPath $SchemaPath) {
+                # If Schema Validation was successful, load the XML File
                 [XML]$Config = Get-Content $Path
             }
             Else {
@@ -63,10 +97,10 @@ Function Get-XmlConfig {
 
         }
         Else {
-       
+
+            # Fail when no Schema File is found.
             # Decided to make the function fail instead of loading without a Schema, too dangerous!
             Write-Verbose "No XML Schema File found."
-            #[XML]$Config = Get-Content $Path
             return
 
         }
